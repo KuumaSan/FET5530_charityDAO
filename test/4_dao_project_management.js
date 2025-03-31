@@ -1,6 +1,7 @@
 const CharityDAO = artifacts.require("CharityDAO");
 const CharityProjectFactory = artifacts.require("CharityProjectFactory");
 const CharityProject = artifacts.require("CharityProject");
+const CharityToken = artifacts.require("CharityToken");
 
 contract("慈善项目资金流程测试", accounts => {
     // 角色分配
@@ -37,13 +38,16 @@ contract("慈善项目资金流程测试", accounts => {
     let projectInstance;
     let approvalProposalId;
     let fundsReleaseProposalId;
+    let tokenInstance;
 
     before(async () => {
+        const initialSupply = web3.utils.toWei("1000000", "ether"); // 100万代币的初始供应量
+        tokenInstance = await CharityToken.new("Charity Token", "CHAR", initialSupply);
         // 部署DAO和项目工厂合约
         daoInstance = await CharityDAO.new(initialMembers, requiredQuorum, requiredMajority);
         console.log("DAO部署完成, 地址:", daoInstance.address);
 
-        factoryInstance = await CharityProjectFactory.new(daoInstance.address);
+        factoryInstance = await CharityProjectFactory.new(daoInstance.address, tokenInstance.address);
         console.log("工厂部署完成, 地址:", factoryInstance.address);
 
         // 添加另一个成员
@@ -169,6 +173,7 @@ contract("慈善项目资金流程测试", accounts => {
         assert.equal(status, STATUS_PENDING_RELEASE, "项目状态应更新为待释放资金");
     });
 
+    //需要更改：不是调用DAO而是project自动创建
     it("5. 创建资金释放提案", async () => {
         // 由DAO成员创建资金释放提案
         const tx = await daoInstance.createFundsReleaseProposal(projectAddress, { from: member1 });

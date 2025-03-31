@@ -1,13 +1,23 @@
+const CharityToken = artifacts.require("CharityToken");
 const CharityDAO = artifacts.require("CharityDAO");
 
 contract("CharityDAO - 成员管理测试", accounts => {
     const [admin, member1, member2, nonMember] = accounts;
 
     let daoInstance;
+    let tokenInstance;
 
     beforeEach(async () => {
-        // 每个测试前重新部署合约
-        daoInstance = await CharityDAO.new([admin], 1, 51);
+        // 为每次测试部署一个新的代币合约
+        tokenInstance = await CharityToken.new("Charity Token", "CHA", 0);
+
+        // 每个测试前重新部署合约，提供代币地址
+        daoInstance = await CharityDAO.new(
+            [admin],
+            1,
+            51,
+            tokenInstance.address
+        );
     });
 
     it("成员可以添加新成员", async () => {

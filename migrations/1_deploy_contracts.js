@@ -3,6 +3,7 @@
 // 导入合约
 const CharityDAO = artifacts.require("CharityDAO");
 const CharityProjectFactory = artifacts.require("CharityProjectFactory");
+const CharityToken = artifacts.require("CharityToken");
 
 /**
  * 部署 CharityDAO 和 CharityProjectFactory 合约
@@ -16,10 +17,20 @@ module.exports = async function(deployer, network, accounts) {
         console.log("部署账户:", accounts[0]);
         console.log("网络:", network);
 
+        // 检查是否有代币合约
+        let tokenAddress;
+
+        await deployer.deploy(CharityToken, "Charity Token", "CHT", "1000000");
+        const tokenInstance = await CharityToken.deployed();
+        tokenAddress = tokenInstance.address;
+        // 直接检查成员映射
+        console.log("代币部署成功！地址:", tokenAddress);
+
         // 部署参数
         const initialMembers = [accounts[0]]; // 初始 DAO 成员为部署账户
         const quorum = 1; // 最小法定人数
         const majorityPercentage = 51; // 通过提案所需的多数票百分比
+
 
         console.log("初始成员:", initialMembers);
         console.log("法定人数:", quorum);
@@ -27,7 +38,7 @@ module.exports = async function(deployer, network, accounts) {
 
         // 步骤 1: 部署 CharityDAO 合约
         console.log("\n正在部署 CharityDAO 合约...");
-        await deployer.deploy(CharityDAO, initialMembers, quorum, majorityPercentage);
+        await deployer.deploy(CharityDAO, initialMembers, quorum, majorityPercentage, tokenAddress);
         const daoInstance = await CharityDAO.deployed();
         console.log("CharityDAO 合约地址:", daoInstance.address);
 
@@ -36,13 +47,13 @@ module.exports = async function(deployer, network, accounts) {
         const memberCount = await daoInstance.memberCount();
         console.log("初始成员数量:", memberCount.toString());
 
-        // 直接检查成员映射
+
         const isMember = await daoInstance.members(accounts[0]);
         console.log("部署账户是否为成员:", isMember);
 
         // 步骤 2: 部署 CharityProjectFactory 合约
         console.log("\n正在部署 CharityProjectFactory 合约...");
-        await deployer.deploy(CharityProjectFactory, daoInstance.address);
+        await deployer.deploy(CharityProjectFactory, daoInstance.address, tokenAddress);
         const factoryInstance = await CharityProjectFactory.deployed();
         console.log("CharityProjectFactory 合约地址:", factoryInstance.address);
 

@@ -20,6 +20,7 @@ contract CharityDAO {
     uint8 public constant STATUS_PENDING_RELEASE = 2; // 待释放资金
     uint8 public constant STATUS_COMPLETED = 3;       // 已完成
     uint8 public constant STATUS_REJECTED = 4;        // 已拒绝
+    uint256 public constant PRECISION_FACTOR = 100;
 
     // 投票选项
     enum VoteOption {
@@ -34,6 +35,13 @@ contract CharityDAO {
         FundsRelease      // 资金释放
     }
 
+    // 修改投票权重相关参数
+    address public governanceToken;
+    uint256 public baseVotingWeight = 1;     // 基础投票权重
+    uint256 public maxVotingWeight = 3;      // 最大投票权重（1基础 + 最多2额外）
+    uint256 public tokenWeightThreshold = 10000 * 10**18; // 达到最大权重所需的代币数量
+
+
     // 提案结构
     struct Proposal {
         uint256 id;
@@ -43,11 +51,12 @@ contract CharityDAO {
         uint256 createdAt;
         uint256 votingDeadline;
         ProposalType proposalType;
-        uint256 yesVotes;
-        uint256 noVotes;
+        uint256 weightedYesVotes; // 加权赞成票
+        uint256 weightedNoVotes;  // 加权反对票
         bool executed;
         bool passed;
         mapping(address => VoteOption) votes;
+        mapping(address => uint256) voteWeights; // 记录每个投票者的权重
     }
 
     // 项目注册结构
@@ -56,6 +65,8 @@ contract CharityDAO {
         string name;
         address owner;
         bool exists;
+
+
         uint256 approvalProposalId; // 项目审批提案ID
         uint256 fundsReleaseProposalId; // 资金释放提案ID
     }
@@ -73,16 +84,18 @@ contract CharityDAO {
     event MemberRemoved(address member);
     event ProjectRegistered(address projectAddress, string name, address owner);
     event ProposalCreated(uint256 proposalId, address projectAddress, ProposalType proposalType);
-    event Voted(uint256 proposalId, address voter, bool approved);
+    event Voted(uint256 proposalId, address voter, bool approved, uint256 weight);
     event ProposalExecuted(uint256 proposalId, bool passed);
+    event VotingWeightUpdated(uint256 baseWeight, uint256 maxWeight, uint256 threshold);
 
     // 构造函数
-    constructor(address[] memory _initialMembers, uint256 _requiredQuorum, uint256 _requiredMajority) {
+    constructor(address[] memory _initialMembers, uint256 _requiredQuorum, uint256 _requiredMajority, address _governanceToken) {
         require(_requiredMajority > 50 && _requiredMajority <= 100, "Majority must be between 51 and 100");
 
         admin = msg.sender;
         requiredQuorum = _requiredQuorum;
         requiredMajority = _requiredMajority;
+        governanceToken = _governanceToken;
 
         // 添加初始成员
         for (uint i = 0; i < _initialMembers.length; i++) {
@@ -149,9 +162,6 @@ contract CharityDAO {
      * @dev 注册新项目 - 由工厂合约调用
      */
     function registerProject(address _projectAddress, string memory _name, address _owner) external {
-        // 这里可以添加安全检查，确认调用者是受信任的工厂合约
-        // require(msg.sender == factoryAddress, "Only factory can register projects");
-
         require(!registeredProjects[_projectAddress].exists, "Project already registered");
 
         // 记录项目信息
@@ -207,6 +217,7 @@ contract CharityDAO {
     external
     registeredProjectOnly(_projectAddress)
     {
+        uint256 beforeProposalCount = proposalCount;
         // 验证项目状态为待释放
         // 这需要调用项目合约的状态查询
         (,,,,,,,uint8 status) = ICharityProject(_projectAddress).getProjectDetails();
@@ -228,12 +239,13 @@ contract CharityDAO {
             ProposalType.FundsRelease
         );
 
+        assert(proposalCount > beforeProposalCount);
         // 更新项目的资金释放提案ID
         project.fundsReleaseProposalId = proposalId;
     }
 
     /**
-     * @dev 投票
+     * @dev 投票 - 修改为支持加权投票
      * @param _proposalId 提案ID
      * @param _approve 是否赞成
      */
@@ -247,15 +259,19 @@ contract CharityDAO {
         require(!proposal.executed, "Proposal already executed");
         require(proposal.votes[msg.sender] == VoteOption.None, "Member already voted");
 
+        // 计算投票者的权重
+        uint256 voterWeight = calculateVotingWeight(msg.sender);
+        proposal.voteWeights[msg.sender] = voterWeight;
+
         if (_approve) {
-            proposal.yesVotes++;
+            proposal.weightedYesVotes += voterWeight;
             proposal.votes[msg.sender] = VoteOption.Approve;
         } else {
-            proposal.noVotes++;
+            proposal.weightedNoVotes += voterWeight;
             proposal.votes[msg.sender] = VoteOption.Reject;
         }
 
-        emit Voted(_proposalId, msg.sender, _approve);
+        emit Voted(_proposalId, msg.sender, _approve, voterWeight);
 
         // 如果达到法定人数和多数票要求，自动执行
         if (_canExecuteProposal(proposal)) {
@@ -265,46 +281,84 @@ contract CharityDAO {
 
 
     /**
-     * @dev 检查提案是否可以执行
+     * @dev 检查提案是否可以执行 - 修改为使用加权投票
      */
     function _canExecuteProposal(Proposal storage proposal) internal view returns (bool) {
-        uint256 totalMembers = memberCount;
-        uint256 totalVotes = proposal.yesVotes + proposal.noVotes;
+        // 计算总的可能投票权重 - 注意这里calculateVotingWeight现在返回的值已经乘以PRECISION_FACTOR
+        uint256 totalPossibleWeight = 0;
+        address member;
 
-        // 检查是否达到法定人数
-        if (totalVotes < requiredQuorum) {
+        for (uint256 i = 0; i < projectAddresses.length; i++) {
+            member = projectAddresses[i];
+            if (members[member]) {
+                totalPossibleWeight += calculateVotingWeight(member);
+            }
+
+            // 也检查项目所有者
+            member = registeredProjects[projectAddresses[i]].owner;
+            if (members[member]) {
+                totalPossibleWeight += calculateVotingWeight(member);
+            }
+        }
+
+        uint256 totalVotedWeight = proposal.weightedYesVotes + proposal.weightedNoVotes;
+
+        // 检查是否达到法定人数（基于权重）
+        // 注意：requiredQuorum在这里被解释为成员比例，所以不需要乘以PRECISION_FACTOR
+        uint256 quorumWeight = (totalPossibleWeight * requiredQuorum) / memberCount;
+        if (totalVotedWeight < quorumWeight) {
             return false; // 未达到法定人数
         }
 
         // 判断提案是否可以确定结果
-        // 1. 赞成票已经达到多数 - 可以执行并通过
-        if ((proposal.yesVotes * 100) / totalMembers >= requiredMajority) {
+        // 1. 赞成票权重已经达到多数 - 可以执行并通过
+        // 这里不需要修改，因为百分比计算中的权重已经包含精度因子，会相互抵消
+        if ((proposal.weightedYesVotes * 100) / totalPossibleWeight >= requiredMajority) {
             return true;
         }
 
-        // 2. 反对票太多，使得不可能达到多数 - 可以执行但不通过
-        // 计算剩余可能的票数
-        uint256 remainingVotes = totalMembers - totalVotes;
-        // 即使所有剩余票都投赞成，也无法达到多数
-        if ((proposal.yesVotes + remainingVotes) * 100 / totalMembers < requiredMajority) {
+        // 2. 反对票权重太多，使得不可能达到多数 - 可以执行但不通过
+        uint256 remainingWeight = totalPossibleWeight - totalVotedWeight;
+        if ((proposal.weightedYesVotes + remainingWeight) * 100 / totalPossibleWeight < requiredMajority) {
             return true;
         }
 
         return false;
     }
 
+
     /**
-     * @dev 执行提案 (内部函数)
-     */
+ * @dev 执行提案 (内部函数) - 修改为使用加权投票，支持小数点权重
+ */
     function _executeProposal(uint256 _proposalId) internal {
         Proposal storage proposal = proposals[_proposalId];
 
         require(!proposal.executed, "Proposal already executed");
 
-        // 计算结果
-        uint256 totalVotes = proposal.yesVotes + proposal.noVotes;
-        uint256 approvalPercentage = totalVotes > 0 ? (proposal.yesVotes * 100) / totalVotes : 0;
-        bool passed = totalVotes >= requiredQuorum && approvalPercentage >= requiredMajority;
+        // 计算结果 - 使用加权投票
+        uint256 totalVotedWeight = proposal.weightedYesVotes + proposal.weightedNoVotes;
+        uint256 approvalPercentage = totalVotedWeight > 0 ? (proposal.weightedYesVotes * 100) / totalVotedWeight : 0;
+
+        // 计算总可能权重 - 与_canExecuteProposal函数相同的计算
+        uint256 totalPossibleWeight = 0;
+        address member;
+
+        for (uint256 i = 0; i < projectAddresses.length; i++) {
+            member = projectAddresses[i];
+            if (members[member]) {
+                totalPossibleWeight += calculateVotingWeight(member);
+            }
+
+            // 也检查项目所有者
+            member = registeredProjects[projectAddresses[i]].owner;
+            if (members[member]) {
+                totalPossibleWeight += calculateVotingWeight(member);
+            }
+        }
+
+        // 与_canExecuteProposal保持一致的quorum计算
+        uint256 quorumWeight = (totalPossibleWeight * requiredQuorum) / memberCount;
+        bool passed = totalVotedWeight >= quorumWeight && approvalPercentage >= requiredMajority;
 
         proposal.passed = passed;
         proposal.executed = true;
@@ -333,6 +387,7 @@ contract CharityDAO {
         emit ProposalExecuted(_proposalId, passed);
     }
 
+
     /**
      * @dev 手动执行提案 - 投票期结束后可以调用
      */
@@ -346,7 +401,68 @@ contract CharityDAO {
     }
 
     /**
-     * @dev 获取提案信息
+ * @dev 计算平方根的辅助函数
+ */
+    function sqrt(uint256 x) internal pure returns (uint256) {
+        if (x == 0) return 0;
+
+        uint256 z = (x + 1) / 2;
+        uint256 y = x;
+
+        while (z < y) {
+            y = z;
+            z = (x / z + z) / 2;
+        }
+
+        return y;
+    }
+
+/**
+ * @dev 计算投票权重
+ * 使用平方根函数计算，确保权重随代币数量增加而增长，但增长速度减缓
+ */
+    function calculateVotingWeight(address _voter) public view returns (uint256) {
+        if (!members[_voter]) {
+            return 0; // 非成员没有投票权
+        }
+
+        // 基础权重 × 精度因子 (例如 100)
+        uint256 baseWeight = baseVotingWeight * 100;
+
+        // 如果没有设置代币地址，直接返回基础权重
+        if (governanceToken == address(0)) {
+            return baseWeight;
+        }
+
+        uint256 tokenBalance = 0;
+        (bool success, bytes memory data) = governanceToken.staticcall(
+            abi.encodeWithSignature("balanceOf(address)", _voter)
+        );
+
+        if (success && data.length >= 32) {
+            tokenBalance = abi.decode(data, (uint256));
+        }
+
+        // 如果没有代币，只有基础权重
+        if (tokenBalance == 0) {
+            return baseWeight;
+        }
+
+        // 改进的非线性权重计算，保留小数点位数
+        uint256 normalizedBalance = (tokenBalance * 10000) / tokenWeightThreshold;
+        if (normalizedBalance > 10000) normalizedBalance = 10000;
+
+        // 使用精确计算保留小数点
+        uint256 sqrtValue = sqrt(normalizedBalance * 100); // 增加精度
+        uint256 maxAdditionalWeight = (maxVotingWeight - baseVotingWeight) * 100;
+        uint256 additionalWeight = (maxAdditionalWeight * sqrtValue) / 1000; // 调整除数以匹配精度
+        uint256 finalWeight = baseWeight + additionalWeight;
+
+        return finalWeight; // 最终权重已乘以100
+    }
+
+    /**
+     * @dev 获取提案信息 - 修改返回值包含加权投票
      */
     function getProposalInfo(uint256 _proposalId) external view returns (
         address projectAddress,
@@ -355,8 +471,8 @@ contract CharityDAO {
         uint256 createdAt,
         uint256 votingDeadline,
         ProposalType proposalType,
-        uint256 yesVotes,
-        uint256 noVotes,
+        uint256 weightedYesVotes,
+        uint256 weightedNoVotes,
         bool executed,
         bool passed
     ) {
@@ -369,8 +485,8 @@ contract CharityDAO {
             proposal.createdAt,
             proposal.votingDeadline,
             proposal.proposalType,
-            proposal.yesVotes,
-            proposal.noVotes,
+            proposal.weightedYesVotes,
+            proposal.weightedNoVotes,
             proposal.executed,
             proposal.passed
         );
@@ -381,6 +497,20 @@ contract CharityDAO {
      */
     function getMemberVote(uint256 _proposalId, address _member) external view returns (VoteOption) {
         return proposals[_proposalId].votes[_member];
+    }
+
+    /**
+     * @dev 获取成员在某提案的投票权重
+     */
+    function getMemberVoteWeight(uint256 _proposalId, address _member) external view returns (uint256) {
+        return proposals[_proposalId].voteWeights[_member];
+    }
+
+    /**
+     * @dev 获取当前成员的投票权重
+     */
+    function getMyVotingWeight() external view returns (uint256) {
+        return calculateVotingWeight(msg.sender);
     }
 
     /**
