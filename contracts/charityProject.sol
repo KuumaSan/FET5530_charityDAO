@@ -1,61 +1,67 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-// 导入ERC20接口
+// Import ERC20 interface
 interface IERC20 {
     function mint(address to, uint256 amount) external;
     function balanceOf(address account) external view returns (uint256);
     function transfer(address to, uint256 amount) external returns (bool);
 }
 
-// 导入DAO接口定义
+// Import DAO interface definition
 interface ICharityDAO {
     function createFundsReleaseProposal(address _projectAddress) external;
 }
 
 /**
- * @title 慈善项目合约
- * @dev 由工厂合约创建的子合约，管理单个慈善项目
+ * @title Charity Project Contract
+ * @dev Child contract created by factory contract, manages a single charity project
  */
 contract CharityProject {
-    // 项目状态常量
-    uint8 public constant STATUS_PENDING = 0;         // 待审核
-    uint8 public constant STATUS_FUNDRAISING = 1;     // 募捐中
-    uint8 public constant STATUS_PENDING_RELEASE = 2; // 待释放资金
-    uint8 public constant STATUS_COMPLETED = 3;       // 已完成
-    uint8 public constant STATUS_REJECTED = 4;        // 已拒绝
+    // Project status constants
+    uint8 public constant STATUS_PENDING = 0;         // Pending review
+    uint8 public constant STATUS_FUNDRAISING = 1;     // Fundraising
+    uint8 public constant STATUS_PENDING_RELEASE = 2; // Pending funds release
+    uint8 public constant STATUS_COMPLETED = 3;       // Completed
+    uint8 public constant STATUS_REJECTED = 4;        // Rejected
 
-    // 项目基本信息
+    // Project basic information
     string public projectName;
     string public description;
-    string public auditMaterials; // IPFS哈希或其他存储证明
+    string public auditMaterials; // IPFS hash or other storage proof
     uint256 public targetAmount;
     uint256 public deadline;
     uint256 public raisedAmount;
     address public owner;
     address public daoAddress;
     uint8 public status;
+    mapping(address => bool) public refunded;    // Refund records - tracks which addresses have received refunds
 
-    // 治理代币地址
+    // Governance token address
     address public governanceToken;
 
-    // 代币奖励比例 (每捐赠1 wei奖励多少代币，默认为100，即捐赠1 ETH奖励100代币)
+    // Token reward ratio (how many tokens to reward per 1 wei donated, default is 100, meaning 100 tokens for 1 ETH donated)
     uint256 public rewardRatio = 100;
 
-    // 捐赠记录
+    // Donation records
     mapping(address => uint256) public donations;
     address[] public donors;
 
-    // 事件
+    // Events
     event DonationReceived(address donor, uint256 amount);
     event TokenRewarded(address donor, uint256 amount);
     event FundsReleased(uint256 amount);
     event StatusChanged(uint8 newStatus);
     event AuditMaterialsUpdated(string newMaterials);
     event RewardRatioUpdated(uint256 newRatio);
+    // Add event to record failures
+    event TokenRewardFailed(address donor, uint256 amount);
+    // Event definitions - added to the event declaration area at the beginning of the contract
+    event RefundProcessed(address donor, uint256 amount);
+    event RefundFailed(address donor, uint256 amount);
 
     /**
-     * @dev 构造函数，初始化项目
+     * @dev Constructor, initializes the project
      */
     constructor(
         string memory _name,
@@ -74,25 +80,25 @@ contract CharityProject {
         deadline = block.timestamp + _duration;
         owner = _owner;
         daoAddress = _daoAddress;
-        status = STATUS_PENDING; // 初始状态为待审核
-        governanceToken = _tokenAddress; // 设置治理代币
+        status = STATUS_PENDING; // Initial status is pending review
+        governanceToken = _tokenAddress; // Set governance token
     }
 
-    // 修饰器：仅DAO可调用
+    // Modifier: Only DAO can call
     modifier onlyDAO() {
         require(msg.sender == daoAddress, "Only DAO can call this function");
         _;
     }
 
-    // 修饰器：仅项目创建者可调用
+    // Modifier: Only project creator can call
     modifier onlyOwner() {
         require(msg.sender == owner, "Only project owner can call this function");
         _;
     }
 
     /**
-     * @dev 更新项目状态 - 仅DAO可调用
-     * @param _newStatus 新状态
+     * @dev Update project status - only DAO can call
+     * @param _newStatus New status
      */
     function updateStatus(uint8 _newStatus) external onlyDAO {
         status = _newStatus;
@@ -100,31 +106,33 @@ contract CharityProject {
     }
 
     /**
-     * @dev 用户捐款并获得代币奖励
+     * @dev User donation and receive token rewards
      */
     function donate() external payable {
         require(status == STATUS_FUNDRAISING, "Project is not in fundraising status");
         require(block.timestamp <= deadline, "Fundraising deadline has passed");
 
-        // 如果是首次捐款，添加到捐赠者列表
+        // If first donation, add to donors list
         if (donations[msg.sender] == 0) {
             donors.push(msg.sender);
         }
 
-        // 记录捐赠
+        // Record donation
         donations[msg.sender] += msg.value;
         raisedAmount += msg.value;
 
-        // 发放代币奖励
+        // Distribute token rewards
         if (governanceToken != address(0)) {
             uint256 tokenReward = msg.value * rewardRatio / 1 ether;
-
-            // 尝试铸造代币给捐赠者
-            try IERC20(governanceToken).mint(msg.sender, tokenReward) {
+            // Calculate complete token amount (including 18 decimal places)
+            uint256 tokenRewardWithDecimals = tokenReward * 10**18;
+            try IERC20(governanceToken).mint(msg.sender, tokenRewardWithDecimals) {
                 emit TokenRewarded(msg.sender, tokenReward);
             } catch {
-                // 如果铸造失败（可能因为代币合约不支持mint或调用者无权限），则不发放奖励
-                // 但不阻止捐赠流程
+                // If minting fails (possibly because token contract doesn't support mint or caller lacks permission), don't distribute rewards
+                // But don't block the donation process
+                // Can add an event to record the failure
+                emit TokenRewardFailed(msg.sender, tokenReward);
             }
         }
 
@@ -132,8 +140,8 @@ contract CharityProject {
     }
 
     /**
-     * @dev 更新审核材料 - 申请释放资金时使用
-     * @param _newMaterials 新的审核材料
+     * @dev Update audit materials - used when requesting funds release
+     * @param _newMaterials New audit materials
      */
     function updateAuditMaterials(string memory _newMaterials) external onlyOwner {
         auditMaterials = _newMaterials;
@@ -141,19 +149,19 @@ contract CharityProject {
     }
 
     /**
-     * @dev 申请释放资金 - 由项目所有者调用
+     * @dev Request funds release - called by project owner
      */
     function requestFundsRelease() external onlyOwner {
         require(status == STATUS_FUNDRAISING, "Project is not in fundraising status");
         status = STATUS_PENDING_RELEASE;
         emit StatusChanged(STATUS_PENDING_RELEASE);
 
-        // 调用DAO合约创建资金释放提案
+        // Call DAO contract to create funds release proposal
         ICharityDAO(daoAddress).createFundsReleaseProposal(address(this));
     }
 
     /**
-     * @dev 释放资金到项目方 - 仅DAO可调用
+     * @dev Release funds to project owner - only DAO can call
      */
     function releaseFunds() external onlyDAO {
         require(status == STATUS_PENDING_RELEASE, "Project is not in pending release status");
@@ -168,28 +176,50 @@ contract CharityProject {
     }
 
     /**
-     * @dev 退还资金给捐赠者 - 仅DAO可调用（项目被拒绝时）
+     * @dev Refund funds to donors - only DAO can call (when project is rejected)
      */
+    /**
+ * @dev Refund funds to all donors - only DAO can call (when project is rejected)
+ * Batch refund to all donors
+ */
     function refundAll() external onlyDAO {
-        require(status == STATUS_REJECTED, "Project is not rejected");
+        require(status == STATUS_REJECTED ,
+            "Project is not in refundable or rejected status");
+
+        // Record total amount successfully refunded
+        uint256 totalRefunded = 0;
 
         for (uint i = 0; i < donors.length; i++) {
             address donor = donors[i];
             uint256 amount = donations[donor];
 
-            if (amount > 0) {
-                donations[donor] = 0;
+            if (amount > 0 && !refunded[donor]) {
+                // Mark as refunded to prevent reentrancy attacks
+                refunded[donor] = true;
+
+                // Send refund
                 (bool success, ) = donor.call{value: amount}("");
-                if (!success) {
-                    // 如果退款失败，恢复捐款记录
-                    donations[donor] = amount;
+
+                if (success) {
+                    // Refund successful, update statistics
+                    totalRefunded += amount;
+                    emit RefundProcessed(donor, amount);
+                } else {
+                    // Refund failed, restore state
+                    refunded[donor] = false;
+                    emit RefundFailed(donor, amount);
                 }
             }
+        }
+
+        // Update project raised amount
+        if (totalRefunded > 0) {
+            raisedAmount -= totalRefunded;
         }
     }
 
     /**
-     * @dev 获取项目详细信息
+     * @dev Get project details
      */
     function getProjectDetails() external view returns (
         string memory,
@@ -200,8 +230,8 @@ contract CharityProject {
         uint256,
         address,
         uint8,
-        address,      // 治理代币地址
-        uint256       // 代币奖励比例
+        address,      // Governance token address
+        uint256       // Token reward ratio
     ) {
         return (
             projectName,
@@ -218,22 +248,22 @@ contract CharityProject {
     }
 
     /**
-     * @dev 获取所有捐赠者
+     * @dev Get all donors
      */
     function getDonors() external view returns (address[] memory) {
         return donors;
     }
 
     /**
-     * @dev 更新治理代币地址 - 仅DAO可调用
+     * @dev Update governance token address - only DAO can call
      */
     function updateGovernanceToken(address _newTokenAddress) external onlyDAO {
         governanceToken = _newTokenAddress;
     }
 
     /**
-     * @dev 更新代币奖励比例 - 仅DAO可调用
-     * @param _newRatio 新的奖励比例 (每捐赠1 ETH奖励多少代币)
+     * @dev Update token reward ratio - only DAO can call
+     * @param _newRatio New reward ratio (how many tokens to reward per 1 ETH donated)
      */
     function updateRewardRatio(uint256 _newRatio) external onlyDAO {
         rewardRatio = _newRatio;

@@ -1,77 +1,74 @@
-// migrations/1_deploy_contracts.js
-
-// 导入合约
 const CharityDAO = artifacts.require("CharityDAO");
 const CharityProjectFactory = artifacts.require("CharityProjectFactory");
 const CharityToken = artifacts.require("CharityToken");
 
 /**
- * 部署 CharityDAO 和 CharityProjectFactory 合约
- * @param {Object} deployer - Truffle 部署工具
- * @param {String} network - 当前部署的网络名称
- * @param {Array} accounts - 当前网络上的账户列表
+ * Deploy CharityDAO and CharityProjectFactory contracts
+ * @param {Object} deployer - Truffle deployment tool
+ * @param {String} network - Current network name for deployment
+ * @param {Array} accounts - List of accounts on the current network
  */
 module.exports = async function(deployer, network, accounts) {
     try {
-        console.log("----- 开始部署 CharityDAO 系统 -----");
-        console.log("部署账户:", accounts[0]);
-        console.log("网络:", network);
+        console.log("----- Starting CharityDAO System Deployment -----");
+        console.log("Deployment account:", accounts[0]);
+        console.log("Network:", network);
 
-        // 检查是否有代币合约
+        // Check if there's a token contract
         let tokenAddress;
 
         await deployer.deploy(CharityToken, "Charity Token", "CHT", "1000000");
         const tokenInstance = await CharityToken.deployed();
         tokenAddress = tokenInstance.address;
-        // 直接检查成员映射
-        console.log("代币部署成功！地址:", tokenAddress);
+        // Directly check member mapping
+        console.log("Token deployment successful! Address:", tokenAddress);
 
-        // 部署参数
-        const initialMembers = [accounts[0]]; // 初始 DAO 成员为部署账户
-        const quorum = 1; // 最小法定人数
-        const majorityPercentage = 51; // 通过提案所需的多数票百分比
+        // Deployment parameters
+        const initialMembers = [accounts[0]]; // Initial DAO member is the deployment account
+        const quorum = 1; // Minimum quorum
+        const majorityPercentage = 51; // Percentage of majority votes needed to pass a proposal
 
 
-        console.log("初始成员:", initialMembers);
-        console.log("法定人数:", quorum);
-        console.log("多数票百分比:", majorityPercentage, "%");
+        console.log("Initial members:", initialMembers);
+        console.log("Quorum:", quorum);
+        console.log("Majority percentage:", majorityPercentage, "%");
 
-        // 步骤 1: 部署 CharityDAO 合约
-        console.log("\n正在部署 CharityDAO 合约...");
+        // Step 1: Deploy CharityDAO contract
+        console.log("\nDeploying CharityDAO contract...");
         await deployer.deploy(CharityDAO, initialMembers, quorum, majorityPercentage, tokenAddress);
         const daoInstance = await CharityDAO.deployed();
-        console.log("CharityDAO 合约地址:", daoInstance.address);
+        console.log("CharityDAO contract address:", daoInstance.address);
 
-        // 打印 DAO 初始状态
-        // 使用公共状态变量 memberCount 而不是 getMemberCount 函数
+        // Print initial DAO state
+        // Use public state variable memberCount instead of getMemberCount function
         const memberCount = await daoInstance.memberCount();
-        console.log("初始成员数量:", memberCount.toString());
+        console.log("Initial member count:", memberCount.toString());
 
 
         const isMember = await daoInstance.members(accounts[0]);
-        console.log("部署账户是否为成员:", isMember);
+        console.log("Is deployment account a member:", isMember);
 
-        // 步骤 2: 部署 CharityProjectFactory 合约
-        console.log("\n正在部署 CharityProjectFactory 合约...");
+        // Step 2: Deploy CharityProjectFactory contract
+        console.log("\nDeploying CharityProjectFactory contract...");
         await deployer.deploy(CharityProjectFactory, daoInstance.address, tokenAddress);
         const factoryInstance = await CharityProjectFactory.deployed();
-        console.log("CharityProjectFactory 合约地址:", factoryInstance.address);
+        console.log("CharityProjectFactory contract address:", factoryInstance.address);
 
-        // 验证 Factory 设置
+        // Verify Factory settings
         const daoAddress = await factoryInstance.daoAddress();
-        console.log("工厂合约中的 DAO 地址:", daoAddress);
-        console.log("验证: DAO 地址是否匹配 =", daoAddress === daoInstance.address);
+        console.log("DAO address in factory contract:", daoAddress);
+        console.log("Verification: DAO address matches =", daoAddress === daoInstance.address);
 
-        // 打印合约交互说明
-        console.log("\n----- 部署完成 -----");
-        console.log("CharityDAO 地址:", daoInstance.address);
-        console.log("CharityProjectFactory 地址:", factoryInstance.address);
-        console.log("\n使用这些地址在应用程序中与合约交互");
-        console.log("示例: const dao = await CharityDAO.at('" + daoInstance.address + "');");
+        // Print contract interaction instructions
+        console.log("\n----- Deployment Complete -----");
+        console.log("CharityDAO address:", daoInstance.address);
+        console.log("CharityProjectFactory address:", factoryInstance.address);
+        console.log("\nUse these addresses to interact with contracts in your application");
+        console.log("Example: const dao = await CharityDAO.at('" + daoInstance.address + "');");
 
     } catch (error) {
-        console.error("\n部署失败:");
+        console.error("\nDeployment failed:");
         console.error(error);
-        throw error; // 重新抛出错误以确保 Truffle 知道部署失败
+        throw error; // Re-throw the error to ensure Truffle knows the deployment failed
     }
 };

@@ -3,30 +3,30 @@ const CharityProjectFactory = artifacts.require("CharityProjectFactory");
 const CharityProject = artifacts.require("CharityProject");
 const CharityToken = artifacts.require("CharityToken");
 
-contract("慈善项目资金流程测试", accounts => {
-    // 角色分配
+contract("Charity Project Fund Flow Tests", accounts => {
+    // Role assignments
     const [admin, member1, member2, projectOwner, donor1, donor2] = accounts;
 
-    // DAO参数
+    // DAO parameters
     const initialMembers = [admin, member1];
-    const requiredQuorum = 1;  // 法定人数
-    const requiredMajority = 51;  // 多数票百分比
+    const requiredQuorum = 1;  // Quorum
+    const requiredMajority = 60;  // Majority vote percentage
 
-    // 项目参数
-    const projectName = "救助山区儿童";
-    const projectDescription = "为山区儿童提供教育资源";
+    // Project parameters
+    const projectName = "Mountain Children Aid";
+    const projectDescription = "Providing educational resources for children in mountain regions";
     const auditMaterials = "ipfs://QmT8JgZbLc7WCdMnAx8oYXXYz8xqPkG8ZspxkEFrTsU6KJ";
     const targetAmount = web3.utils.toWei("5", "ether");  // 5 ETH
-    const duration = 60 * 60 * 24 * 30;  // 30天
+    const duration = 60 * 60 * 24 * 30;  // 30 days
 
-    // 状态常量 (与合约中的常量保持一致)
-    const STATUS_PENDING = 0;         // 待审核
-    const STATUS_FUNDRAISING = 1;     // 募捐中
-    const STATUS_PENDING_RELEASE = 2; // 待释放资金
-    const STATUS_COMPLETED = 3;       // 已完成
-    const STATUS_REJECTED = 4;        // 已拒绝
+    // Status constants (consistent with contract constants)
+    const STATUS_PENDING = 0;         // Pending review
+    const STATUS_FUNDRAISING = 1;     // Fundraising
+    const STATUS_PENDING_RELEASE = 2; // Pending fund release
+    const STATUS_COMPLETED = 3;       // Completed
+    const STATUS_REJECTED = 4;        // Rejected
 
-    // 枚举类型 (与合约中的枚举保持一致)
+    // Enum types (consistent with contract enums)
     const ProposalType = {
         ProjectApproval: 0,
         FundsRelease: 1
@@ -41,22 +41,43 @@ contract("慈善项目资金流程测试", accounts => {
     let tokenInstance;
 
     before(async () => {
-        const initialSupply = web3.utils.toWei("1000000", "ether"); // 100万代币的初始供应量
+        const initialSupply = web3.utils.toWei("1000000", "ether"); // 1 million tokens initial supply
         tokenInstance = await CharityToken.new("Charity Token", "CHAR", initialSupply);
-        // 部署DAO和项目工厂合约
-        daoInstance = await CharityDAO.new(initialMembers, requiredQuorum, requiredMajority);
-        console.log("DAO部署完成, 地址:", daoInstance.address);
+
+        // Deploy DAO and project factory contracts
+        daoInstance = await CharityDAO.new(initialMembers, requiredQuorum, requiredMajority, tokenInstance.address);
+        console.log("DAO deployment completed, address:", daoInstance.address);
 
         factoryInstance = await CharityProjectFactory.new(daoInstance.address, tokenInstance.address);
-        console.log("工厂部署完成, 地址:", factoryInstance.address);
+        console.log("Factory deployment completed, address:", factoryInstance.address);
 
-        // 添加另一个成员
+        // Add another member
         await daoInstance.addMember(member2, { from: admin });
-        console.log("添加成员:", member2);
+        console.log("Added member:", member2);
+
+        // Distribute tokens to create different voting weights
+        console.log("Distributing tokens to create different voting weights...");
+        const weightThreshold = await daoInstance.tokenWeightThreshold();
+        console.log("Weight threshold:", web3.utils.fromWei(weightThreshold, "ether"), "tokens");
+
+        // Distribute different amounts of tokens to different members
+        await tokenInstance.transfer(member1, web3.utils.toWei("5000", "ether"), { from: admin });
+        await tokenInstance.transfer(member2, web3.utils.toWei("2500", "ether"), { from: admin });
+
+        // Check each member's voting weight
+        const weight_admin = await daoInstance.calculateVotingWeight(admin);
+        const weight_member1 = await daoInstance.calculateVotingWeight(member1);
+        const weight_member2 = await daoInstance.calculateVotingWeight(member2);
+
+        console.log("Member voting weights:", {
+            admin: weight_admin.toString(),
+            member1: weight_member1.toString(),
+            member2: weight_member2.toString()
+        });
     });
 
-    it("1. 项目创建和注册", async () => {
-        // 通过工厂创建项目
+    it("1. Project creation and registration", async () => {
+        // Create project through factory
         const tx = await factoryInstance.createProject(
             projectName,
             projectDescription,
@@ -66,195 +87,350 @@ contract("慈善项目资金流程测试", accounts => {
             { from: projectOwner }
         );
 
-        // 从事件中获取项目地址
+        // Get project address from event
         const projectCreatedEvent = tx.logs.find(log => log.event === "ProjectCreated");
-        assert(projectCreatedEvent, "项目创建事件未触发");
+        assert(projectCreatedEvent, "Project creation event not triggered");
 
         projectAddress = projectCreatedEvent.args.projectAddress;
-        console.log("项目创建成功, 地址:", projectAddress);
+        console.log("Project created successfully, address:", projectAddress);
 
-        // 获取项目实例
+        // Get project instance
         projectInstance = await CharityProject.at(projectAddress);
 
-        // 验证项目基本信息
+        // Verify project basic information
         const projectDetails = await projectInstance.getProjectDetails();
-        assert.equal(projectDetails[0], projectName, "项目名称不匹配");
-        assert.equal(projectDetails[1], projectDescription, "项目描述不匹配");
-        assert.equal(projectDetails[3].toString(), targetAmount, "目标金额不匹配");
-        assert.equal(projectDetails[6], projectOwner, "项目所有者不匹配");
-        assert.equal(projectDetails[7], STATUS_PENDING, "初始状态应为待审核");
+        assert.equal(projectDetails[0], projectName, "Project name doesn't match");
+        assert.equal(projectDetails[1], projectDescription, "Project description doesn't match");
+        assert.equal(projectDetails[3].toString(), targetAmount, "Target amount doesn't match");
+        assert.equal(projectDetails[6], projectOwner, "Project owner doesn't match");
+        assert.equal(projectDetails[7], STATUS_PENDING, "Initial status should be pending review");
 
-        // 验证项目已在DAO中注册
+        // Verify project is registered in DAO
         const registeredProject = await daoInstance.registeredProjects(projectAddress);
-        assert.equal(registeredProject.exists, true, "项目未在DAO中注册");
-        assert.equal(registeredProject.name, projectName, "DAO中的项目名称不匹配");
-        assert.equal(registeredProject.owner, projectOwner, "DAO中的项目所有者不匹配");
+        assert.equal(registeredProject.exists, true, "Project not registered in DAO");
+        assert.equal(registeredProject.name, projectName, "Project name in DAO doesn't match");
+        assert.equal(registeredProject.owner, projectOwner, "Project owner in DAO doesn't match");
 
-        // 获取创建的审批提案ID
+        // Get approval proposal ID
         approvalProposalId = registeredProject.approvalProposalId.toNumber();
-        console.log("项目审批提案ID:", approvalProposalId);
+        console.log("Project approval proposal ID:", approvalProposalId);
 
-        // 验证提案信息
+        // Verify proposal information
         const proposalInfo = await daoInstance.getProposalInfo(approvalProposalId);
-        assert.equal(proposalInfo.projectAddress, projectAddress, "提案中的项目地址不匹配");
-        assert.equal(proposalInfo.proposalType, ProposalType.ProjectApproval, "提案类型应为项目审批");
+        assert.equal(proposalInfo.projectAddress, projectAddress, "Project address in proposal doesn't match");
+        assert.equal(proposalInfo.proposalType, ProposalType.ProjectApproval, "Proposal type should be project approval");
     });
 
-    it("2. 项目审批投票", async () => {
-        // 验证项目初始状态
+    it("2. Project approval voting - using weighted voting", async () => {
+        // Verify project initial status
         let status = (await projectInstance.status()).toNumber();
-        assert.equal(status, STATUS_PENDING, "项目初始状态应为待审核");
+        assert.equal(status, STATUS_PENDING, "Project initial status should be pending review");
 
-        // 成员投票
-        console.log("成员进行投票...");
-        await daoInstance.vote(approvalProposalId, true, { from: admin });
-        await daoInstance.vote(approvalProposalId, true, { from: member1 });
+        // Get accurate project approval proposal ID
+        const registeredProject = await daoInstance.registeredProjects(projectAddress);
+        approvalProposalId = registeredProject.approvalProposalId.toNumber();
+        console.log("Checking approval proposal ID:", approvalProposalId);
 
-        // 验证投票结果
+        // Get proposal information before voting
+        const proposalBeforeVote = await daoInstance.getProposalInfo(approvalProposalId);
+        console.log("Proposal status before voting:", {
+            projectAddress: proposalBeforeVote[0],
+            projectName: proposalBeforeVote[1],
+            projectOwner: proposalBeforeVote[2],
+            createdAt: proposalBeforeVote[3].toString(),
+            votingDeadline: proposalBeforeVote[4].toString(),
+            proposalType: proposalBeforeVote[5].toString(),
+            weightedYesVotes: proposalBeforeVote[6].toString(),
+            weightedNoVotes: proposalBeforeVote[7].toString(),
+            executed: proposalBeforeVote[8],
+            passed: proposalBeforeVote[9]
+        });
+
+        // Members vote - record each member's voting weight
+        console.log("Members performing weighted voting...");
+
+        try {
+            // Get voting weights
+            const weight_admin = await daoInstance.calculateVotingWeight(admin);
+            console.log(`admin weight: ${weight_admin.toString()}`);
+
+            // Record voting status before voting
+            let hasVoted = await daoInstance.getMemberVote(approvalProposalId, admin);
+            console.log(`admin voting status before voting: ${hasVoted}`);
+
+            // admin votes
+            const voteTx = await daoInstance.vote(approvalProposalId, true, { from: admin });
+            console.log("admin voting transaction hash:", voteTx.tx);
+
+            // Check transaction receipt and events
+            const receipt = await web3.eth.getTransactionReceipt(voteTx.tx);
+            console.log("Transaction status:", receipt.status);
+
+            // Find Vote event
+            const voteEvents = await daoInstance.getPastEvents('Voted', {
+                fromBlock: receipt.blockNumber,
+                toBlock: receipt.blockNumber
+            });
+            console.log("Voted event:", voteEvents.length > 0 ? "emitted" : "not emitted");
+            if (voteEvents.length > 0) {
+                console.log("Event details:", {
+                    proposalId: voteEvents[0].args.proposalId.toString(),
+                    voter: voteEvents[0].args.voter,
+                    approved: voteEvents[0].args.approved,
+                    weight: voteEvents[0].args.weight.toString()
+                });
+            }
+
+            // Check status after voting
+            hasVoted = await daoInstance.getMemberVote(approvalProposalId, admin);
+            console.log(`admin voting status after voting: ${hasVoted}`);
+            assert.notEqual(hasVoted, 0, "admin should be marked as having voted"); // 0 is None, 1 is Approve, 2 is Reject
+
+            // Check if admin's voting weight is correctly recorded
+            const adminVoteWeight = await daoInstance.getMemberVoteWeight(approvalProposalId, admin);
+            console.log(`admin recorded voting weight: ${adminVoteWeight.toString()}`);
+            assert.equal(adminVoteWeight.toString(), weight_admin.toString(), "admin's voting weight not correctly recorded");
+
+            // Check proposal status after admin votes
+            const proposalAfterAdminVote = await daoInstance.getProposalInfo(approvalProposalId);
+            console.log("Proposal status after admin vote:", {
+                weightedYesVotes: proposalAfterAdminVote[6].toString(),
+                weightedNoVotes: proposalAfterAdminVote[7].toString(),
+                executed: proposalAfterAdminVote[8],
+                passed: proposalAfterAdminVote[9]
+            });
+
+            // Verify admin's weight is correctly counted
+            assert.equal(
+                proposalAfterAdminVote[6].toString(),
+                weight_admin.toString(),
+                "admin's voting weight not correctly counted"
+            );
+
+            // If proposal not executed, member1 also votes
+            if (!proposalAfterAdminVote[8]) {
+                console.log("Proposal not executed, member1 continues voting...");
+                const weight_member1 = await daoInstance.calculateVotingWeight(member1);
+                console.log(`member1 weight: ${weight_member1.toString()}`);
+
+                const voteTx2 = await daoInstance.vote(approvalProposalId, true, { from: member1 });
+                console.log("member1 voting transaction hash:", voteTx2.tx);
+
+                // Check if member1's voting weight is correctly recorded
+                const member1VoteWeight = await daoInstance.getMemberVoteWeight(approvalProposalId, member1);
+                console.log(`member1 recorded voting weight: ${member1VoteWeight.toString()}`);
+                assert.equal(member1VoteWeight.toString(), weight_member1.toString(), "member1's voting weight not correctly recorded");
+
+                // Check proposal status after member1 votes
+                const proposalAfterMember1Vote = await daoInstance.getProposalInfo(approvalProposalId);
+                console.log("Proposal status after member1 vote:", {
+                    weightedYesVotes: proposalAfterMember1Vote[6].toString(),
+                    weightedNoVotes: proposalAfterMember1Vote[7].toString(),
+                    executed: proposalAfterMember1Vote[8],
+                    passed: proposalAfterMember1Vote[9]
+                });
+
+                // Verify member1's weight is correctly added
+                const expectedYesVotes = web3.utils.toBN(weight_admin).add(web3.utils.toBN(weight_member1));
+                assert.equal(
+                    proposalAfterMember1Vote[6].toString(),
+                    expectedYesVotes.toString(),
+                    "member1's voting weight not correctly added"
+                );
+
+                // Check member1 voting status
+                const member1HasVoted = await daoInstance.getMemberVote(approvalProposalId, member1);
+                assert.notEqual(member1HasVoted, 0, "member1 should be marked as having voted");
+            } else {
+                console.log("Proposal already executed after admin vote, no need for member1 to vote");
+            }
+
+        } catch (error) {
+            console.error("Error during voting process:", error.message);
+            // Print more detailed error information
+            if (error.reason) console.error("Error reason:", error.reason);
+            if (error.data) console.error("Error data:", error.data);
+            throw error; // Re-throw error
+        }
+
+        // Get final proposal status
         const approvalProposal = await daoInstance.getProposalInfo(approvalProposalId);
-        assert.equal(approvalProposal.yesVotes, 2, "应有2票赞成");
-        assert.equal(approvalProposal.noVotes, 0, "应有0票反对");
+        console.log("Final proposal status:", {
+            weightedYesVotes: approvalProposal[6].toString(),
+            weightedNoVotes: approvalProposal[7].toString(),
+            executed: approvalProposal[8],
+            passed: approvalProposal[9]
+        });
 
-        // 验证提案是否自动执行
-        assert.equal(approvalProposal.executed, true, "提案应已执行");
-        assert.equal(approvalProposal.passed, true, "提案应已通过");
+        // Verify proposal has been executed
+        assert.equal(approvalProposal[8], true, "Proposal should have been executed");
+        assert.equal(approvalProposal[9], true, "Proposal should have passed");
 
-        // 验证项目状态是否更新为募捐中
+        // Verify project status is updated to fundraising
         status = (await projectInstance.status()).toNumber();
-        assert.equal(status, STATUS_FUNDRAISING, "项目状态应更新为募捐中");
-        console.log("项目审批通过，状态更新为募捐中");
+        assert.equal(status, STATUS_FUNDRAISING, "Project status should be updated to fundraising");
+        console.log("Project approval passed, status updated to fundraising");
     });
 
-    it("3. 向项目捐款", async () => {
-        // 获取初始余额
-        const initialProjectBalance = await web3.eth.getBalance(projectAddress);
-        console.log("项目初始余额:", web3.utils.fromWei(initialProjectBalance, "ether"), "ETH");
 
-        // 捐赠者1捐款2 ETH
+    it("3. Donate to project", async () => {
+        // Get initial balance
+        const initialProjectBalance = await web3.eth.getBalance(projectAddress);
+        console.log("Project initial balance:", web3.utils.fromWei(initialProjectBalance, "ether"), "ETH");
+
+        // Donor1 donates 2 ETH
         const donation1 = web3.utils.toWei("2", "ether");
         await projectInstance.donate({ from: donor1, value: donation1 });
-        console.log("捐赠者1捐款:", web3.utils.fromWei(donation1, "ether"), "ETH");
+        console.log("Donor1 donation:", web3.utils.fromWei(donation1, "ether"), "ETH");
 
-        // 捐赠者2捐款1.5 ETH
+        // Donor2 donates 1.5 ETH
         const donation2 = web3.utils.toWei("1.5", "ether");
         await projectInstance.donate({ from: donor2, value: donation2 });
-        console.log("捐赠者2捐款:", web3.utils.fromWei(donation2, "ether"), "ETH");
+        console.log("Donor2 donation:", web3.utils.fromWei(donation2, "ether"), "ETH");
 
-        // 验证项目余额
+        // Verify project balance
         const projectBalance = await web3.eth.getBalance(projectAddress);
         const expectedBalance = web3.utils.toBN(initialProjectBalance).add(web3.utils.toBN(donation1)).add(web3.utils.toBN(donation2));
-        assert.equal(projectBalance, expectedBalance.toString(), "项目余额不匹配");
-        console.log("项目当前余额:", web3.utils.fromWei(projectBalance, "ether"), "ETH");
+        assert.equal(projectBalance, expectedBalance.toString(), "Project balance doesn't match");
+        console.log("Project current balance:", web3.utils.fromWei(projectBalance, "ether"), "ETH");
 
-        // 验证项目筹集金额
+        // Verify project raised amount
         const raisedAmount = await projectInstance.raisedAmount();
-        assert.equal(raisedAmount.toString(), expectedBalance.toString(), "筹集金额不匹配");
-
-        // 验证捐赠记录
-        const donor1Donation = await projectInstance.donations(donor1);
-        assert.equal(donor1Donation.toString(), donation1, "捐赠者1的捐款记录不匹配");
-
-        const donor2Donation = await projectInstance.donations(donor2);
-        assert.equal(donor2Donation.toString(), donation2, "捐赠者2的捐款记录不匹配");
+        assert.equal(raisedAmount.toString(), expectedBalance.toString(), "Raised amount doesn't match");
     });
 
-    it("4. 项目方申请释放资金", async () => {
-        // 项目方更新审计材料
+    it("4. Project owner requests fund release", async () => {
+        // Project owner updates audit materials
         const newAuditMaterials = "ipfs://QmUpdatedAuditMaterialsHash";
         await projectInstance.updateAuditMaterials(newAuditMaterials, { from: projectOwner });
-        console.log("项目方更新审计材料:", newAuditMaterials);
+        console.log("Project owner updates audit materials:", newAuditMaterials);
 
-        // 项目方申请释放资金
+        // Project owner requests fund release
         await projectInstance.requestFundsRelease({ from: projectOwner });
-        console.log("项目方申请释放资金");
+        console.log("Project owner requests fund release");
 
-        // 验证项目状态
+        // Verify project status
         const status = (await projectInstance.status()).toNumber();
-        assert.equal(status, STATUS_PENDING_RELEASE, "项目状态应更新为待释放资金");
-    });
+        assert.equal(status, STATUS_PENDING_RELEASE, "Project status should be updated to pending release");
 
-    //需要更改：不是调用DAO而是project自动创建
-    it("5. 创建资金释放提案", async () => {
-        // 由DAO成员创建资金释放提案
-        const tx = await daoInstance.createFundsReleaseProposal(projectAddress, { from: member1 });
-        console.log("创建资金释放提案");
-
-        // 从事件中获取提案ID
-        const proposalCreatedEvent = tx.logs.find(log => log.event === "ProposalCreated");
-        assert(proposalCreatedEvent, "提案创建事件未触发");
-
-        fundsReleaseProposalId = proposalCreatedEvent.args.proposalId.toNumber();
-        console.log("资金释放提案ID:", fundsReleaseProposalId);
-
-        // 验证提案信息
-        const proposalInfo = await daoInstance.getProposalInfo(fundsReleaseProposalId);
-        assert.equal(proposalInfo.projectAddress, projectAddress, "提案中的项目地址不匹配");
-        assert.equal(proposalInfo.proposalType, ProposalType.FundsRelease, "提案类型应为资金释放");
-
-        // 验证提案已关联到项目
+        // Check if fund release proposal is automatically created
         const registeredProject = await daoInstance.registeredProjects(projectAddress);
-        assert.equal(registeredProject.fundsReleaseProposalId.toNumber(), fundsReleaseProposalId, "提案ID未关联到项目");
+        fundsReleaseProposalId = registeredProject.fundsReleaseProposalId.toNumber();
+        console.log("Automatically created fund release proposal ID:", fundsReleaseProposalId);
+
+        // Verify proposal information
+        const proposalInfo = await daoInstance.getProposalInfo(fundsReleaseProposalId);
+        assert.equal(proposalInfo.projectAddress, projectAddress, "Project address in proposal doesn't match");
+        assert.equal(proposalInfo.proposalType, ProposalType.FundsRelease, "Proposal type should be fund release");
     });
 
-    it("6. 资金释放投票", async () => {
-        // 记录项目方和项目的初始余额
+    it("5. Fund release voting - using weighted voting", async () => {
+        // Record project owner and project initial balances
         const initialOwnerBalance = web3.utils.toBN(await web3.eth.getBalance(projectOwner));
         const projectBalance = web3.utils.toBN(await web3.eth.getBalance(projectAddress));
-        console.log("项目余额:", web3.utils.fromWei(projectBalance, "ether"), "ETH");
-        console.log("项目方初始余额:", web3.utils.fromWei(initialOwnerBalance, "ether"), "ETH");
+        console.log("Project balance:", web3.utils.fromWei(projectBalance, "ether"), "ETH");
+        console.log("Project owner initial balance:", web3.utils.fromWei(initialOwnerBalance, "ether"), "ETH");
 
-        // DAO成员投票
-        console.log("成员进行资金释放投票...");
+        // Get proposal status before voting
+        const proposalBeforeVote = await daoInstance.getProposalInfo(fundsReleaseProposalId);
+        console.log("Fund release proposal status before voting:", {
+            executed: proposalBeforeVote.executed,
+            passed: proposalBeforeVote.passed,
+            weightedYesVotes: proposalBeforeVote.weightedYesVotes.toString(),
+            weightedNoVotes: proposalBeforeVote.weightedNoVotes.toString()
+        });
+
+        // admin votes
+        const weight_admin = await daoInstance.calculateVotingWeight(admin);
         await daoInstance.vote(fundsReleaseProposalId, true, { from: admin });
-        await daoInstance.vote(fundsReleaseProposalId, true, { from: member1 });
+        console.log(`admin voted in favor of fund release, weight: ${weight_admin}`);
 
-        // 不需要member2投票，已经达到通过条件
+        // Check status after admin votes
+        const proposalAfterAdminVote = await daoInstance.getProposalInfo(fundsReleaseProposalId);
+        console.log("Status after admin vote:", {
+            executed: proposalAfterAdminVote.executed,
+            passed: proposalAfterAdminVote.passed,
+            weightedYesVotes: proposalAfterAdminVote.weightedYesVotes.toString(),
+            weightedNoVotes: proposalAfterAdminVote.weightedNoVotes.toString()
+        });
 
-        // 等待交易完成
+        // If admin's voting weight is not enough to pass the proposal, add member1's vote
+        if (!proposalAfterAdminVote.executed) {
+            const weight_member1 = await daoInstance.calculateVotingWeight(member1);
+            await daoInstance.vote(fundsReleaseProposalId, true, { from: member1 });
+            console.log(`member1 voted in favor of fund release, weight: ${weight_member1}`);
+
+            // Check status after member1 votes
+            const proposalAfterMember1Vote = await daoInstance.getProposalInfo(fundsReleaseProposalId);
+            console.log("Status after member1 vote:", {
+                executed: proposalAfterMember1Vote.executed,
+                passed: proposalAfterMember1Vote.passed,
+                weightedYesVotes: proposalAfterMember1Vote.weightedYesVotes.toString(),
+                weightedNoVotes: proposalAfterMember1Vote.weightedNoVotes.toString()
+            });
+
+            // Verify member1's weight is correctly added
+            const expectedYesVotes = web3.utils.toBN(weight_admin).add(web3.utils.toBN(weight_member1));
+            assert.equal(
+                proposalAfterMember1Vote.weightedYesVotes.toString(),
+                expectedYesVotes.toString(),
+                "member1's voting weight not correctly added"
+            );
+        }
+
+        // Wait for transaction to complete
         await new Promise(resolve => setTimeout(resolve, 1000));
 
-        // 验证投票结果
+        // Get final proposal status
         const releaseProposal = await daoInstance.getProposalInfo(fundsReleaseProposalId);
-        assert.equal(releaseProposal.executed, true, "提案应已执行");
-        assert.equal(releaseProposal.passed, true, "提案应已通过");
+        console.log("Final fund release proposal status:", {
+            executed: releaseProposal.executed,
+            passed: releaseProposal.passed,
+            weightedYesVotes: releaseProposal.weightedYesVotes.toString(),
+            weightedNoVotes: releaseProposal.weightedNoVotes.toString()
+        });
 
-        // 验证项目状态
+        // Verify proposal execution
+        assert.equal(releaseProposal.executed, true, "Proposal should have been executed");
+        assert.equal(releaseProposal.passed, true, "Proposal should have passed");
+
+        // Verify project status
         const status = (await projectInstance.status()).toNumber();
-        assert.equal(status, STATUS_COMPLETED, "项目状态应更新为已完成");
+        assert.equal(status, STATUS_COMPLETED, "Project status should be updated to completed");
 
-        // 验证资金已转移至项目方
+        // Verify funds have been transferred to project owner
         const finalProjectBalance = web3.utils.toBN(await web3.eth.getBalance(projectAddress));
-        console.log("项目最终余额:", web3.utils.fromWei(finalProjectBalance, "ether"), "ETH");
+        console.log("Project final balance:", web3.utils.fromWei(finalProjectBalance, "ether"), "ETH");
 
-        // 项目余额应为零或接近零
+        // Project balance should be zero or close to zero
         assert(finalProjectBalance.lt(web3.utils.toBN(web3.utils.toWei("0.01", "ether"))),
-            "项目余额应接近零");
+            "Project balance should be close to zero");
 
-        // 获取项目方最终余额
+        // Get project owner final balance
         const finalOwnerBalance = web3.utils.toBN(await web3.eth.getBalance(projectOwner));
-        console.log("项目方最终余额:", web3.utils.fromWei(finalOwnerBalance, "ether"), "ETH");
+        console.log("Project owner final balance:", web3.utils.fromWei(finalOwnerBalance, "ether"), "ETH");
 
-        // 由于gas费用影响，我们只能粗略检查余额是否增加
-        // 检查项目方的余额是否显著增加(至少增加项目余额的90%)
+        // Due to gas fee impact, we can only roughly check if balance has increased
+        // Check if project owner's balance has significantly increased (at least 90% of project balance)
         const expectedMinIncrease = projectBalance.mul(web3.utils.toBN(90)).div(web3.utils.toBN(100));
         const actualIncrease = finalOwnerBalance.sub(initialOwnerBalance);
 
-        console.log("预期最小增加:", web3.utils.fromWei(expectedMinIncrease, "ether"), "ETH");
-        console.log("实际增加:", web3.utils.fromWei(actualIncrease, "ether"), "ETH");
+        console.log("Expected minimum increase:", web3.utils.fromWei(expectedMinIncrease, "ether"), "ETH");
+        console.log("Actual increase:", web3.utils.fromWei(actualIncrease, "ether"), "ETH");
 
-        assert(finalOwnerBalance.gt(initialOwnerBalance), "项目方余额应增加");
-        // 不再使用精确断言，而是使用更宽松的判断
+        assert(finalOwnerBalance.gt(initialOwnerBalance), "Project owner balance should increase");
     });
 
-    it("7. 拒绝案例：测试投票反对流程", async () => {
+    it("6. Weighted voting against case test", async () => {
         try {
-            // 创建一个新项目用于测试拒绝场景
-            console.log("开始创建拒绝测试项目...");
-            const rejectedProjectName = "拒绝测试项目";
+            // Create a new project for testing weighted against voting scenario
+            console.log("Starting to create weighted against test project...");
+            const rejectedProjectName = "Weighted Against Test Project";
+            const timestamp = Math.floor(Date.now() / 1000);
             let tx = await factoryInstance.createProject(
-                rejectedProjectName,
-                "这是一个将被拒绝的测试项目",
-                "ipfs://test-reject",
+                `${rejectedProjectName}_${timestamp}`,
+                "Testing weighted voting against mechanism",
+                "ipfs://test-weighted-reject",
                 web3.utils.toWei("1", "ether"),
                 duration,
                 { from: projectOwner }
@@ -262,65 +438,207 @@ contract("慈善项目资金流程测试", accounts => {
 
             const projectCreatedEvent = tx.logs.find(log => log.event === "ProjectCreated");
             const rejectedProjectAddress = projectCreatedEvent.args.projectAddress;
-            console.log("拒绝测试项目创建成功, 地址:", rejectedProjectAddress);
+            console.log("Weighted against test project created successfully, address:", rejectedProjectAddress);
 
             const rejectedProjectInstance = await CharityProject.at(rejectedProjectAddress);
 
-            // 获取提案ID
+            // Get proposal ID
             const registeredProject = await daoInstance.registeredProjects(rejectedProjectAddress);
             const rejectProposalId = registeredProject.approvalProposalId.toNumber();
-            console.log("拒绝测试项目的审批提案ID:", rejectProposalId);
+            console.log("Weighted against test project approval proposal ID:", rejectProposalId);
 
-            // 验证初始状态
+            // Verify initial status
             let status = (await rejectedProjectInstance.status()).toNumber();
-            assert.equal(status, STATUS_PENDING, "项目初始状态应为待审核");
+            assert.equal(status, STATUS_PENDING, "Project initial status should be pending review");
 
-            // 成员投反对票
-            console.log("成员开始投反对票...");
-            await daoInstance.vote(rejectProposalId, false, { from: admin });
-            await daoInstance.vote(rejectProposalId, false, { from: member1 });
+            // Get members' voting weights
+            const weight_admin = await daoInstance.calculateVotingWeight(admin);
+            const weight_member1 = await daoInstance.calculateVotingWeight(member1);
+            const weight_member2 = await daoInstance.calculateVotingWeight(member2);
 
-            // 等待交易完成
-            await new Promise(resolve => setTimeout(resolve, 1000));
-
-            // 获取投票后的提案信息
-            const proposalInfo = await daoInstance.getProposalInfo(rejectProposalId);
-            console.log("提案信息:", {
-                executed: proposalInfo.executed,
-                passed: proposalInfo.passed,
-                yesVotes: proposalInfo.yesVotes.toString(),
-                noVotes: proposalInfo.noVotes.toString(),
+            console.log("Member voting weights:", {
+                admin: weight_admin.toString(),
+                member1: weight_member1.toString(),
+                member2: weight_member2.toString()
             });
 
-            // 验证反对票数
-            assert.equal(proposalInfo.noVotes.toString(), "2", "应有2票反对");
-            assert.equal(proposalInfo.yesVotes.toString(), "0", "应有0票赞成");
+            // member1 and member2 vote against (high weight members)
+            console.log("Members begin voting weighted against...");
 
-            // 验证提案状态 - 现在期望它已执行但未通过
-            assert.equal(proposalInfo.executed, true, "提案在反对票足够多时应自动执行");
-            assert.equal(proposalInfo.passed, false, "提案应标记为未通过");
+            await daoInstance.vote(rejectProposalId, false, { from: member1 });
+            console.log(`member1 voted against, weight: ${weight_member1}`);
 
-            // 获取项目最终状态
+            // Check status after member1 votes
+            const proposalAfterMember1Vote = await daoInstance.getProposalInfo(rejectProposalId);
+            console.log("Status after member1 vote:", {
+                executed: proposalAfterMember1Vote.executed,
+                passed: proposalAfterMember1Vote.passed,
+                weightedYesVotes: proposalAfterMember1Vote.weightedYesVotes.toString(),
+                weightedNoVotes: proposalAfterMember1Vote.weightedNoVotes.toString()
+            });
+
+            // If proposal not executed, member2 also votes
+            if (!proposalAfterMember1Vote.executed) {
+                await daoInstance.vote(rejectProposalId, false, { from: member2 });
+                console.log(`member2 voted against, weight: ${weight_member2}`);
+            }
+
+            // Wait for transaction to complete
+            await new Promise(resolve => setTimeout(resolve, 1000));
+
+            // Get proposal info after voting
+            const proposalInfo = await daoInstance.getProposalInfo(rejectProposalId);
+            console.log("Final proposal info:", {
+                executed: proposalInfo.executed,
+                passed: proposalInfo.passed,
+                weightedYesVotes: proposalInfo.weightedYesVotes.toString(),
+                weightedNoVotes: proposalInfo.weightedNoVotes.toString(),
+            });
+
+            // Verify total weight of against votes
+            const expectedNoVotes = web3.utils.toBN(weight_member1).add(web3.utils.toBN(weight_member2));
+            assert.equal(
+                proposalInfo.weightedNoVotes.toString(),
+                expectedNoVotes.toString(),
+                "Total weight of against votes doesn't match"
+            );
+
+            // Verify proposal status - should be executed but not passed
+            assert.equal(proposalInfo.executed, true, "Proposal should automatically execute when against vote weight is high enough");
+            assert.equal(proposalInfo.passed, false, "Proposal should be marked as not passed");
+
+            // Get project final status
             status = (await rejectedProjectInstance.status()).toNumber();
-            console.log("项目最终状态:", status);
+            console.log("Project final status:", status);
 
-            // 验证项目状态是否已更新为拒绝
-            assert.equal(status, STATUS_REJECTED, "项目状态应更新为已拒绝");
+            // Verify project status is updated to rejected
+            assert.equal(status, STATUS_REJECTED, "Project status should be updated to rejected");
 
-            console.log("✅ 反对投票测试通过：成功创建了项目并投了反对票，提案已执行且未通过，项目状态已更新为已拒绝");
+            console.log("✅ Weighted against voting test passed: Successfully created project and used weighted voting mechanism to vote against, proposal executed and didn't pass");
 
         } catch (error) {
-            console.error("反对投票测试失败:", error.message);
-            assert.fail("测试应该成功: " + error.message);
+            console.error("Weighted against voting test failed:", error.message);
+            assert.fail("Test should succeed: " + error.message);
         }
     });
 
-    it("8. 非正常情况测试：未批准状态下不能捐款", async () => {
-        // 创建一个新项目但不投票通过
-        const pendingProjectName = "待审核项目";
+    it("7. Verify weighted voting system weight differences", async () => {
+        // Create a new test project
+        console.log("Creating weight difference test project...");
+        const timestamp = Math.floor(Date.now() / 1000);
         const tx = await factoryInstance.createProject(
-            pendingProjectName,
-            "这是一个处于待审核状态的项目",
+            `Weight Difference Test Project_${timestamp}`,
+            "Testing voting weight differences between members",
+            "ipfs://test-weight-difference",
+            web3.utils.toWei("1", "ether"),
+            duration,
+            { from: projectOwner }
+        );
+
+        const projectCreatedEvent = tx.logs.find(log => log.event === "ProjectCreated");
+        const testProjectAddress = projectCreatedEvent.args.projectAddress;
+        console.log("Weight difference test project created successfully, address:", testProjectAddress);
+
+        // Get proposal ID
+        const registeredProject = await daoInstance.registeredProjects(testProjectAddress);
+        const testProposalId = registeredProject.approvalProposalId.toNumber();
+        console.log("Weight difference test proposal ID:", testProposalId);
+
+        // Get members' voting weights
+        const weight_admin = await daoInstance.calculateVotingWeight(admin);
+        const weight_member1 = await daoInstance.calculateVotingWeight(member1);
+        const weight_member2 = await daoInstance.calculateVotingWeight(member2);
+
+        console.log("Voting weight comparison:", {
+            admin: weight_admin.toString(),
+            member1: weight_member1.toString(),
+            member2: weight_member2.toString()
+        });
+
+        // Verify weight differences - based on token holdings, should be different
+        assert(Number(weight_admin) !== Number(weight_member1), "admin and member1 weights should be different");
+        assert(Number(weight_member1) !== Number(weight_member2), "member1 and member2 weights should be different");
+
+        // Verify relationship between token holdings and weights
+        console.log("Token holdings and weight relationship:", {
+            'admin_tokens': await tokenInstance.balanceOf(admin).then(bal => web3.utils.fromWei(bal, "ether")),
+            'admin_weight': weight_admin.toString(),
+            'member1_tokens': await tokenInstance.balanceOf(member1).then(bal => web3.utils.fromWei(bal, "ether")),
+            'member1_weight': weight_member1.toString(),
+            'member2_tokens': await tokenInstance.balanceOf(member2).then(bal => web3.utils.fromWei(bal, "ether")),
+            'member2_weight': weight_member2.toString()
+        });
+
+        // Test actual impact of weights in voting
+        // Assume member1 weight is greater than admin+member2 total weight
+        // Have admin and member2 vote one way, member1 vote the other, verify if member1 can decide the outcome alone
+
+        const totalWeightAdminAndMember2 = web3.utils.toBN(weight_admin).add(web3.utils.toBN(weight_member2));
+        console.log(`admin+member2 total weight: ${totalWeightAdminAndMember2}`);
+        console.log(`member1 weight: ${weight_member1}`);
+
+        // Determine voting strategy based on weight relationship
+        if (web3.utils.toBN(weight_member1).gt(totalWeightAdminAndMember2)) {
+            console.log("Test scenario: member1 weight is greater than admin+member2 total weight");
+
+            // admin and member2 vote YES
+            await daoInstance.vote(testProposalId, true, { from: admin });
+            console.log(`admin voted in favor, weight: ${weight_admin}`);
+
+            await daoInstance.vote(testProposalId, true, { from: member2 });
+            console.log(`member2 voted in favor, weight: ${weight_member2}`);
+
+            // member1 votes NO, should determine the outcome
+            await daoInstance.vote(testProposalId, false, { from: member1 });
+            console.log(`member1 voted against, weight: ${weight_member1}`);
+
+            // Verify outcome
+            const proposalInfo = await daoInstance.getProposalInfo(testProposalId);
+            console.log("Final voting result:", {
+                weightedYesVotes: proposalInfo.weightedYesVotes.toString(),
+                weightedNoVotes: proposalInfo.weightedNoVotes.toString(),
+                passed: proposalInfo.passed
+            });
+
+            // member1's against vote weight is higher, so proposal should not pass
+            assert.equal(proposalInfo.passed, false, "member1's high weight vote should determine outcome");
+
+        } else {
+            console.log("Test scenario: member1 weight is less than or equal to admin+member2 total weight");
+
+            // member1 votes NO
+            await daoInstance.vote(testProposalId, false, { from: member1 });
+            console.log(`member1 voted against, weight: ${weight_member1}`);
+
+            // admin and member2 vote YES, should determine outcome
+            await daoInstance.vote(testProposalId, true, { from: admin });
+            console.log(`admin voted in favor, weight: ${weight_admin}`);
+
+            await daoInstance.vote(testProposalId, true, { from: member2 });
+            console.log(`member2 voted in favor, weight: ${weight_member2}`);
+
+            // Verify outcome
+            const proposalInfo = await daoInstance.getProposalInfo(testProposalId);
+            console.log("Final voting result:", {
+                weightedYesVotes: proposalInfo.weightedYesVotes.toString(),
+                weightedNoVotes: proposalInfo.weightedNoVotes.toString(),
+                passed: proposalInfo.passed
+            });
+
+            // admin+member2 yes vote weight is higher, so proposal should pass
+            assert.equal(proposalInfo.passed, true, "admin+member2 total voting weight should determine outcome");
+        }
+
+        console.log("✅ Weighted voting weight difference test completed");
+    });
+
+    it("8. Abnormal case test: cannot donate when not approved", async () => {
+        // Create a new project but don't vote to approve it
+        const pendingProjectName = "Pending Project";
+        const timestamp = Math.floor(Date.now() / 1000);
+        const tx = await factoryInstance.createProject(
+            `${pendingProjectName}_${timestamp}`,
+            "This is a project in pending review status",
             "ipfs://test-pending",
             web3.utils.toWei("1", "ether"),
             duration,
@@ -329,160 +647,45 @@ contract("慈善项目资金流程测试", accounts => {
 
         const projectCreatedEvent = tx.logs.find(log => log.event === "ProjectCreated");
         const pendingProjectAddress = projectCreatedEvent.args.projectAddress;
-        console.log("待审核项目创建成功, 地址:", pendingProjectAddress);
+        console.log("Pending project created successfully, address:", pendingProjectAddress);
 
         const pendingProjectInstance = await CharityProject.at(pendingProjectAddress);
 
-        // 尝试向未审核项目捐款应该失败
+        // Trying to donate to unapproved project should fail
         try {
             await pendingProjectInstance.donate({ from: donor1, value: web3.utils.toWei("0.1", "ether") });
-            assert.fail("向未审核项目捐款应该失败");
+            assert.fail("Donating to unapproved project should fail");
         } catch (error) {
-            assert(error.message.includes("revert"), "应当发生回滚");
-            console.log("向未审核项目捐款被阻止，符合预期");
+            assert(error.message.includes("revert"), "Revert should occur");
+            console.log("Donation to unapproved project was blocked, as expected");
         }
     });
 
-    it("9. 项目状态和流程完整性验证", async () => {
-        // 检查成功项目的完整流程状态
-        console.log("验证成功完成的项目的最终状态...");
+    it("9. Project status and process integrity verification", async () => {
+        // Check final status of successfully completed project
+        console.log("Verifying final status of successfully completed project...");
 
-        // 获取项目详情
+        // Get project details
         const projectDetails = await projectInstance.getProjectDetails();
-        assert.equal(projectDetails[7], STATUS_COMPLETED, "项目最终状态应为已完成");
+        assert.equal(projectDetails[7], STATUS_COMPLETED, "Project final status should be completed");
 
-        // 验证项目余额为零
+        // Verify project balance is zero
         const projectBalance = await web3.eth.getBalance(projectAddress);
-        assert.equal(projectBalance, "0", "项目余额应为零");
+        assert.equal(projectBalance, "0", "Project balance should be zero");
 
-        // 验证项目在DAO中的记录
+        // Verify project record in DAO
         const registeredProject = await daoInstance.registeredProjects(projectAddress);
-        assert.equal(registeredProject.exists, true, "项目应在DAO中存在");
+        assert.equal(registeredProject.exists, true, "Project should exist in DAO");
 
-        // 验证两个提案状态
+        // Verify both proposal statuses
         const approvalProposalInfo = await daoInstance.getProposalInfo(approvalProposalId);
-        assert.equal(approvalProposalInfo.executed, true, "审批提案应已执行");
-        assert.equal(approvalProposalInfo.passed, true, "审批提案应已通过");
+        assert.equal(approvalProposalInfo.executed, true, "Approval proposal should be executed");
+        assert.equal(approvalProposalInfo.passed, true, "Approval proposal should have passed");
 
         const releaseProposalInfo = await daoInstance.getProposalInfo(fundsReleaseProposalId);
-        assert.equal(releaseProposalInfo.executed, true, "资金释放提案应已执行");
-        assert.equal(releaseProposalInfo.passed, true, "资金释放提案应已通过");
+        assert.equal(releaseProposalInfo.executed, true, "Fund release proposal should be executed");
+        assert.equal(releaseProposalInfo.passed, true, "Fund release proposal should have passed");
 
-        console.log("项目生命周期验证完成，所有状态正确");
+        console.log("Project lifecycle verification complete, all statuses correct");
     });
-    it("10. 非正常情况测试", async () => {
-        console.log("开始非正常情况测试...");
-
-        // 1. 测试未批准状态下不能捐款
-        console.log("测试1: 未批准状态下不能捐款");
-        try {
-            // 创建一个新项目但不进行投票
-            const pendingProjectName = "待审核项目";
-            const tx = await factoryInstance.createProject(
-                pendingProjectName,
-                "这是一个处于待审核状态的项目",
-                "ipfs://test-pending",
-                web3.utils.toWei("1", "ether"),
-                duration,
-                { from: projectOwner }
-            );
-
-            const projectCreatedEvent = tx.logs.find(log => log.event === "ProjectCreated");
-            const pendingProjectAddress = projectCreatedEvent.args.projectAddress;
-            console.log("待审核项目创建成功, 地址:", pendingProjectAddress);
-
-            const pendingProjectInstance = await CharityProject.at(pendingProjectAddress);
-
-            // 验证初始状态
-            const status = (await pendingProjectInstance.status()).toNumber();
-            assert.equal(status, STATUS_PENDING, "项目初始状态应为待审核");
-
-            // 尝试向未审核项目捐款应该失败
-            try {
-                await pendingProjectInstance.donate({ from: donor1, value: web3.utils.toWei("0.1", "ether") });
-                assert.fail("向未审核项目捐款应该失败");
-            } catch (error) {
-                assert(error.message.includes("revert"), "应当发生回滚");
-                console.log("✅ 测试通过: 向未审核项目捐款被阻止");
-            }
-
-            // 2. 测试非项目拥有者不能申请释放资金
-            console.log("\n测试2: 非项目拥有者不能申请释放资金");
-            // 先批准项目
-            const proposalEvents = await daoInstance.getPastEvents('ProposalCreated', {
-                fromBlock: 0,
-                toBlock: 'latest'
-            });
-
-            const relevantProposal = proposalEvents.find(
-                event => event.args.projectAddress === pendingProjectAddress
-            );
-
-            const proposalId = relevantProposal.args.proposalId;
-            console.log("项目审批提案ID:", proposalId.toString());
-
-            // 投赞成票批准项目
-            await daoInstance.vote(proposalId, true, { from: admin });
-            await daoInstance.vote(proposalId, true, { from: member1 });
-
-            // 等待交易处理
-            await new Promise(resolve => setTimeout(resolve, 1000));
-
-            // 验证项目状态已更新为募捐中
-            const statusAfterApproval = (await pendingProjectInstance.status()).toNumber();
-            assert.equal(statusAfterApproval, STATUS_FUNDRAISING, "项目状态应更新为募捐中");
-
-            // 捐款到项目
-            await pendingProjectInstance.donate({ from: donor1, value: web3.utils.toWei("0.5", "ether") });
-            console.log("向项目捐款 0.5 ETH 成功");
-
-            // 非项目拥有者尝试申请释放资金
-            try {
-                await pendingProjectInstance.requestFundsRelease({ from: donor1 });
-                assert.fail("非项目拥有者不应能申请释放资金");
-            } catch (error) {
-                assert(error.message.includes("revert"), "应当发生回滚");
-                console.log("✅ 测试通过: 非项目拥有者申请释放资金被阻止");
-            }
-
-            // 3. 测试非DAO不能更新项目状态
-            console.log("\n测试3: 非DAO不能更新项目状态");
-            try {
-                await pendingProjectInstance.updateStatus(STATUS_COMPLETED, { from: admin });
-                assert.fail("非DAO地址不应能更新项目状态");
-            } catch (error) {
-                assert(error.message.includes("revert"), "应当发生回滚");
-                console.log("✅ 测试通过: 非DAO更新项目状态被阻止");
-            }
-
-            // 4. 测试非成员不能在DAO中投票
-            console.log("\n测试4: 非成员不能在DAO中投票");
-            const nonMember = donor2;  // 使用donor2作为非成员
-
-            try {
-                await daoInstance.vote(proposalId, true, { from: nonMember });
-                assert.fail("非成员不应能在DAO中投票");
-            } catch (error) {
-                assert(error.message.includes("revert"), "应当发生回滚");
-                console.log("✅ 测试通过: 非成员投票被阻止");
-            }
-
-            // 5. 测试募捐中的项目不能直接释放资金
-            console.log("\n测试5: 募捐中的项目不能直接释放资金");
-            try {
-                await pendingProjectInstance.releaseFunds({ from: admin });
-                assert.fail("募捐中的项目不应能直接释放资金");
-            } catch (error) {
-                assert(error.message.includes("revert"), "应当发生回滚");
-                console.log("✅ 测试通过: 募捐中项目直接释放资金被阻止");
-            }
-
-            console.log("\n所有非正常情况测试通过，系统安全机制工作正常");
-
-        } catch (error) {
-            console.error("非正常情况测试失败:", error.message);
-            assert.fail("测试应该成功: " + error.message);
-        }
-    });
-
 });

@@ -2,49 +2,49 @@
 pragma solidity ^0.8.20;
 
 import "./CharityProject.sol";
-import "./DAO.sol"; // 导入DAO合约
+import "./DAO.sol";
 
 /**
- * @title 慈善项目工厂合约
- * @dev 用于创建和管理慈善项目的工厂合约
+ * @title Charity Project Factory Contract
+ * @dev Factory contract for creating and managing charity projects
  */
 contract CharityProjectFactory {
-    // DAO合约地址
+    // DAO contract address
     address public daoAddress;
 
-    // 治理代币地址
+    // Governance token address
     address public governanceToken;
 
-    // 添加管理员地址
+    // Add admin address
     address public admin;
 
-    // 项目映射和列表
+    // Project mapping and list
     mapping(address => bool) public projectExists;
     address[] public projects;
 
-    // 事件
+    // Events
     event ProjectCreated(address projectAddress, string name, address owner);
     event AdminChanged(address newAdmin);
 
     /**
-     * @dev 构造函数
-     * @param _daoAddress DAO合约地址
-     * @param _tokenAddress 治理代币地址
+     * @dev Constructor
+     * @param _daoAddress DAO contract address
+     * @param _tokenAddress Governance token address
      */
     constructor(address _daoAddress, address _tokenAddress) {
         daoAddress = _daoAddress;
         governanceToken = _tokenAddress;
-        admin = msg.sender; // 设置部署者为初始管理员
+        admin = msg.sender; // Set deployer as initial admin
     }
 
     /**
-     * @dev 创建新的慈善项目
-     * @param _name 项目名称
-     * @param _description 项目描述
-     * @param _auditMaterials 审核材料
-     * @param _targetAmount 目标金额
-     * @param _duration 募集持续时间（秒）
-     * @return 新创建的项目合约地址
+     * @dev Create new charity project
+     * @param _name Project name
+     * @param _description Project description
+     * @param _auditMaterials Audit materials
+     * @param _targetAmount Target amount
+     * @param _duration Fundraising duration (seconds)
+     * @return Address of the newly created project contract
      */
     function createProject(
         string memory _name,
@@ -53,45 +53,45 @@ contract CharityProjectFactory {
         uint256 _targetAmount,
         uint256 _duration
     ) external returns (address) {
-        // 创建新的项目合约
+        // Create new project contract
         CharityProject newProject = new CharityProject(
             _name,
             _description,
             _auditMaterials,
             _targetAmount,
             _duration,
-            msg.sender,   // 项目创建者
-            daoAddress,   // DAO地址
-            governanceToken  // 传递治理代币地址
+            msg.sender,   // Project creator
+            daoAddress,   // DAO address
+            governanceToken  // Pass governance token address
         );
 
         address projectAddress = address(newProject);
 
-        // 记录项目
+        // Record project
         projectExists[projectAddress] = true;
         projects.push(projectAddress);
 
-        // 通知DAO合约有新项目待审核 - 使用导入的DAO接口
+        // Notify DAO contract of new project pending review - using imported DAO interface
         CharityDAO dao = CharityDAO(daoAddress);
         dao.registerProject(projectAddress, _name, msg.sender);
 
-        // 触发事件
+        // Trigger event
         emit ProjectCreated(projectAddress, _name, msg.sender);
 
         return projectAddress;
     }
 
     /**
-     * @dev 获取所有项目的数量
+     * @dev Get total number of projects
      */
     function getProjectCount() external view returns (uint256) {
         return projects.length;
     }
 
     /**
-     * @dev 批量获取项目地址
-     * @param _start 起始索引
-     * @param _limit 要获取的数量
+     * @dev Batch retrieve project addresses
+     * @param _start Starting index
+     * @param _limit Number to retrieve
      */
     function getProjects(uint256 _start, uint256 _limit) external view returns (address[] memory) {
         require(_start < projects.length, "Start index out of bounds");
@@ -112,8 +112,8 @@ contract CharityProjectFactory {
     }
 
     /**
-     * @dev 更新DAO地址
-     * @param _newDaoAddress 新的DAO合约地址
+     * @dev Update DAO address
+     * @param _newDaoAddress New DAO contract address
      */
     function updateDaoAddress(address _newDaoAddress) external {
         require(msg.sender == admin || msg.sender == daoAddress, "Unauthorized");
@@ -121,19 +121,18 @@ contract CharityProjectFactory {
     }
 
     /**
-     * @dev 更新治理代币地址
-     * @param _newTokenAddress 新的治理代币地址
+     * @dev Update governance token address
+     * @param _newTokenAddress New governance token address
      */
     function updateGovernanceToken(address _newTokenAddress) external {
         require(msg.sender == admin || msg.sender == daoAddress, "Unauthorized");
         governanceToken = _newTokenAddress;
 
-        // 注意：这只会更新工厂的引用，不会更新已创建的项目
     }
 
     /**
-     * @dev 更新管理员地址
-     * @param _newAdmin 新的管理员地址
+     * @dev Update admin address
+     * @param _newAdmin New admin address
      */
     function updateAdmin(address _newAdmin) external {
         require(msg.sender == admin, "Only admin can change admin");
