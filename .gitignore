@@ -1,17 +1,17 @@
-# Truffle 和 Node.js 文件
+# Truffle and Node.js files
 /node_modules
 /build
 /.env
 
-# 操作系统文件
+# OS file
 .DS_Store
 Thumbs.db
 
-# 编辑器文件
+# IDE file
 .idea/
 .vscode/
 *.swp
 *.swo
 
-# 区块链开发
+# blockchain development
 .openzeppelin/
