@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Charity DAO Platform</title>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Oleo+Script:wght@400;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/web3@1.5.3/dist/web3.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/truffle-contract@4.0.31/dist/truffle-contract.min.js"></script>
+</head>
+
+<body>
+    <header>
+        <div class="container">
+            <h1>Charity <span class="dao-text">DAO</span> Platform</h1>
+            <div id="account-info" class="hidden-info">
+                <p>Connected Account: <span id="account-address">Not connected</span></p>
+                <p>Balance: <span id="account-balance">0</span> ETH</p>
+                <p>DAO Member: <span id="member-status">Unknown</span></p>
+                <p>Admin: <span id="admin-status">Unknown</span></p>
+                <p>Token Balance: <span id="token-balance">0</span> <span id="token-symbol">TOKEN</span></p>
+            </div>
+        </div>
+    </header>
+
+    <!-- 修改导航栏部分 -->
+    <nav class="main-nav">
+        <div class="container">
+            <ul class="nav-list">
+                <li><a href="#" class="nav-link" data-section="projects-section">Projects</a></li>
+                <li><a href="#" class="nav-link" data-section="proposals-section">Proposals</a></li>
+                <li class="create-project-nav"><a href="#" class="nav-link" data-section="project-creation">Create New
+                        Project</a></li>
+                <li class="dao-management-nav"><a href="#" class="nav-link" data-section="dao-management">DAO
+                        Management</a></li>
+                <li><a href="#" class="nav-link" data-section="more-section">More</a></li>
+                <li class="nav-connect">
+                    <button id="connect-wallet" class="connect-btn">Connect Wallet</button>
+                    <div class="wallet-dropdown hidden">
+                        <div class="wallet-info">
+                            <div class="account-avatar">
+                                <img src="https://avatars.dicebear.com/api/jdenticon/${accountAddress}.svg"
+                                    alt="Account Avatar">
+                                <div class="avatar-upload">
+                                    <label for="avatar-input" class="avatar-edit">
+                                        <span class="edit-icon">✏️</span>
+                                    </label>
+                                    <input type="file" id="avatar-input" accept="image/*" class="hidden">
+                                </div>
+                            </div>
+                            <div class="account-details">
+                                <p class="account-name"></p>
+                                <p class="account-address"></p>
+                                <p class="account-balance"></p>
+                            </div>
+                        </div>
+                        <div class="wallet-actions">
+                            <button class="disconnect-btn">Disconnect</button>
+                        </div>
+                    </div>
+                </li>
+            </ul>
+        </div>
+    </nav>
+
+    <main class="container">
+        <section id="connection-section" class="hidden">
+            <h2>Connection</h2>
+            <button id="connect-wallet">Connect Wallet</button>
+            <div id="contract-addresses">
+                <p>DAO Contract: <span id="dao-address">Not loaded</span></p>
+                <p>Factory Contract: <span id="factory-address">Not loaded</span></p>
+                <p>Token Contract: <span id="token-address">Not loaded</span></p>
+            </div>
+        </section>
+
+        <section id="dao-management" class="hidden">
+            <h2>DAO Management</h2>
+
+            <div id="add-member-section" class="card">
+                <h3>Add Member</h3>
+                <div class="form-group">
+                    <label for="new-member-address">Member Address:</label>
+                    <input type="text" id="new-member-address" placeholder="0x...">
+                </div>
+                <button id="add-member-btn" class="view-project-btn" aria-label="Add Member"></button>
+            </div>
+
+            <!-- 添加代币分配部分 -->
+            <div id="token-distribution-section" class="card">
+                <h3>Distribute Governance Tokens</h3>
+                <div class="token-info">
+                    <p>Token Name: <span id="token-name">Not loaded</span></p>
+                    <p>Token Symbol: <span id="token-symbol">Not loaded</span></p>
+                    <p>Total Supply: <span id="token-supply">0</span></p>
+                </div>
+                <div class="form-group">
+                    <label for="token-recipient-address">Member Address:</label>
+                    <input type="text" id="token-recipient-address" placeholder="0x...">
+                </div>
+                <div class="form-group">
+                    <label for="token-amount">Amount:</label>
+                    <input type="number" id="token-amount" placeholder="100" min="1" step="1">
+                </div>
+                <button id="distribute-tokens-btn" class="view-project-btn" aria-label="Distribute Tokens"></button>
+            </div>
+
+            <div class="card">
+                <h3>DAO Information</h3>
+                <p>Member Count: <span id="member-count">0</span></p>
+                <p>Required Quorum: <span id="required-quorum">0</span></p>
+                <p>Required Majority: <span id="required-majority">0</span>%</p>
+                <p>Your Voting Weight: <span id="voting-weight">0</span></p>
+            </div>
+        </section>
+
+        <section id="project-creation" class="hidden">
+            <h2>Create New Project</h2>
+            <div class="card">
+                <div class="form-group">
+                    <label for="project-name">Project Name:</label>
+                    <input type="text" id="project-name" placeholder="Enter project name">
+                </div>
+                <div class="form-group">
+                    <label for="project-description">Description:</label>
+                    <textarea id="project-description" placeholder="Enter project description"></textarea>
+                </div>
+                <div class="form-group">
+                    <label for="project-materials">Audit Materials (IPFS hash):</label>
+                    <input type="text" id="project-materials" placeholder="ipfs://...">
+                </div>
+                <div class="form-group">
+                    <label for="project-target">Target Amount (ETH):</label>
+                    <input type="number" id="project-target" placeholder="5" min="0" step="0.1">
+                </div>
+                <div class="form-group">
+                    <label for="project-duration">Duration (days):</label>
+                    <input type="number" id="project-duration" placeholder="30" min="1">
+                </div>
+                <button id="create-project-btn" class="view-project-btn" aria-label="Create Project"></button>
+            </div>
+        </section>
+
+        <section id="projects-section">
+            <h2>Projects</h2>
+            <div class="tabs">
+                <button class="tab-btn active" data-tab="all-projects">All Projects</button>
+                <button class="tab-btn" data-tab="pending-projects">Pending Approval</button>
+                <button class="tab-btn" data-tab="fundraising-projects">Fundraising</button>
+                <button class="tab-btn" data-tab="pending-release-projects">Pending Release</button>
+                <button class="tab-btn" data-tab="completed-projects">Completed</button>
+            </div>
+            <div id="projects-list" class="projects-grid">
+                <!-- Projects will be loaded here -->
+                <p id="loading-projects">Loading projects...</p>
+            </div>
+        </section>
+
+        <section id="proposals-section">
+            <h2>Proposals</h2>
+            <div class="tabs">
+                <button class="tab-btn active" data-tab="active-proposals">Active Proposals</button>
+                <button class="tab-btn" data-tab="past-proposals">Past Proposals</button>
+            </div>
+            <div id="proposals-list">
+                <!-- Proposals will be loaded here -->
+                <p id="loading-proposals">Loading proposals...</p>
+            </div>
+        </section>
+
+        <section id="project-details-section" class="hidden">
+            <h2>Project Details</h2>
+            <button id="back-to-projects" class="secondary-btn">← Back to Projects</button>
+            <div class="card" id="project-details-card">
+                <!-- Project details will be loaded here -->
+            </div>
+        </section>
+
+        <section id="more-section" class="hidden">
+            <div class="container">
+                <div class="contract-info">
+                    <h2>Contract Addresses</h2>
+                    <div class="contract-item">
+                        <h3>DAO Contract</h3>
+                        <p>0xf770eA2C54801f70Eb51dA13071b79DB8Ea7eD64</p>
+                    </div>
+                    <div class="contract-item">
+                        <h3>Factory Contract</h3>
+                        <p>0x8fAb6A777565c3efBaeb70B39356F4b4d6a566C9</p>
+                    </div>
+                    <div class="contract-item">
+                        <h3>Token Contract</h3>
+                        <p>0x00b9B8F3C366c54C1C361f70379FeD57dA63A49F</p>
+                    </div>
+                </div>
+                <div class="about-us">
+                    <h2>About Us</h2>
+                    <p>Welcome to the Charity DAO Platform, a decentralized autonomous organization dedicated to making
+                        charitable giving more transparent, efficient, and impactful. Our platform leverages blockchain
+                        technology to ensure that every donation is tracked, every project is accountable, and every
+                        decision is made through community consensus.</p>
+                    <p>Our mission is to revolutionize charitable giving by:</p>
+                    <ul>
+                        <li>Ensuring transparency in fund allocation and project execution</li>
+                        <li>Empowering donors to participate in decision-making</li>
+                        <li>Reducing administrative overhead through smart contracts</li>
+                        <li>Building trust through blockchain-based verification</li>
+                        <li>Creating a community-driven approach to charitable giving</li>
+                    </ul>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <div class="container">
+            <p>Charity DAO Platform - A decentralized platform for charitable projects</p>
+        </div>
+    </footer>
+
+    <!-- Project template -->
+    <template id="project-card-template">
+        <div class="project-card">
+            <h3 class="project-title"></h3>
+            <p class="project-description"></p>
+            <div class="project-details">
+                <p>Status: <span class="project-status"></span></p>
+                <p>Target: <span class="project-target"></span> ETH</p>
+                <p>Raised: <span class="project-raised"></span> ETH</p>
+                <p>Deadline: <span class="project-deadline"></span></p>
+            </div>
+            <button class="view-project-btn" aria-label="View Details"></button>
+        </div>
+    </template>
+
+    <!-- Proposal template -->
+    <template id="proposal-card-template">
+        <div class="proposal-card">
+            <h3 class="proposal-title"></h3>
+            <p class="proposal-type"></p>
+            <div class="proposal-details">
+                <p>Project: <span class="proposal-project"></span></p>
+                <p>Deadline: <span class="proposal-deadline"></span></p>
+                <p>Weighted Votes: <span class="proposal-yes-votes"></span> Yes / <span
+                        class="proposal-no-votes"></span> No</p>
+                <p>Status: <span class="proposal-status"></span></p>
+            </div>
+            <div class="proposal-actions">
+                <button class="vote-yes-btn">Vote Yes</button>
+                <button class="vote-no-btn">Vote No</button>
+                <button class="execute-proposal-btn">Execute</button>
+            </div>
+            <button class="view-project-btn" aria-label="View Project Details"></button>
+        </div>
+    </template>
+
+    <script src="js/app.js"></script>
+</body>
+
+</html>
